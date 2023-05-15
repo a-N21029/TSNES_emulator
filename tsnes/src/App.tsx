@@ -2,6 +2,8 @@ import React from 'react';
 import logo from './logo.svg';
 import './App.css';
 
+import Bus from './components/CPU/Bus';
+
 function App() {
   return (
     <div className="App">
@@ -19,6 +21,7 @@ function App() {
           Learn React
         </a>
       </header>
+      < Bus />
     </div>
   );
 }
