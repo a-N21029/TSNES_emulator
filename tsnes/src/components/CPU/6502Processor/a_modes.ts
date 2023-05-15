@@ -3,6 +3,8 @@
 import Processor6502 from "./utils";
 // import Bus from "./utils";
 
+const BITS16 = 2**16 - 1
+
 // Address Mode: Implied
 // There is no additional data required for this instruction. The instruction
 // does something very simple like like sets a status bit. However, the accumulator register
@@ -153,8 +155,8 @@ export const IZX = (cpu:Processor6502) => {
 	const t = cpu.read(cpu.pc);
 	cpu.pc++;
 
-	const low = cpu.read(((t + cpu.x) % (2**16 - 1)) & 0x00FF); // represent low and high as 16-bit numbers
-	const high = cpu.read(((t + cpu.x + 1) % (2**16 - 1)) & 0x00FF);
+	const low = cpu.read(((t + (cpu.x % BITS16)) % (BITS16)) & 0x00FF); // represent low and high as 16-bit numbers
+	const high = cpu.read(((t + (cpu.x % BITS16) + 1) % (BITS16)) & 0x00FF);
 
 	cpu.addr_abs = (high << 8) | low;
 	

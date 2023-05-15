@@ -2,6 +2,7 @@ import React from "react";
 import "./a_modes"
 import "./opcodes"
 import "./utils"
+import { ADDRESSING_MODE } from "./opcodes";
 
 const Processor6502 = () => {
 
@@ -25,12 +26,6 @@ const Processor6502 = () => {
 		N = (1 << 7),	// Negative
 	};
 
-    // The read location of data can come from two sources, a memory address, or
-	// its immediately available as part of the instruction. This function decides
-	// depending on address mode of instruction byte
-	const fetch = () => {
-
-    }
 
     const addr_abs = 0x0000; // All used memory addresses end up in here
 	const addr_rel = 0x00;   // Represents absolute address following a branch

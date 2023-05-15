@@ -18,6 +18,16 @@ class Instruction { // representation of an instruction and its related informat
     }
 }
 
+interface FLAGS6502 {
+    C: number;
+    Z: number;
+    I: number;
+    D: number;
+    B: number;
+    U: number;
+    V: number;
+    N: number;
+}
 class Processor6502 {
 
     // 6502 processor registers. All are 8-bit registers except for the program counter, which is 16
@@ -27,7 +37,7 @@ class Processor6502 {
 	stkp:number;   	    // Stack Pointer (points to location on bus)
 	pc:number;          // Program Counter
 	status:number; 	    // Status Register
-    FLAGS6502:object;   // The flags which are represented in the status register 
+    FLAGS6502:FLAGS6502;   // The flags which are represented in the status register 
     addr_abs:number;    // All used memory addresses end up in here
 	addr_rel:number;    // Represents absolute address following a branch
 	opcode:number;      // Is the instruction byte of the current instruction
@@ -72,20 +82,106 @@ class Processor6502 {
         this.bus.write(addr, data)
     }
 
-    reset(){	// Reset Interrupt - Forces CPU into known state
-    
+    // Sets or clears a specific bit of the status register
+    // precondition: f is one of the members of this.FLAGS6502
+    SetFlag(f:number, v:number)
+    {
+        if (v)
+            this.status |= f;
+        else
+            this.status &= ~f;
     }
+
+    GetFlag(f:number)
+    {
+        return ((this.status & f) > 0) ? 1 : 0;
+    }
+
+    // Reset Interrupt - Forces CPU into known state
+    // Get address to set program counter to
+    reset(){
+        this.addr_abs = 0xFFFC;
+        const low = this.read(this.addr_abs + 0);
+        const high = this.read(this.addr_abs + 1);
+
+        // Set it
+        this.pc = (high << 8) | low;
+
+        // Reset internal registers
+        this.a = 0;
+        this.x = 0;
+        this.y = 0;
+        this.stkp = 0xFD;
+        this.status = 0x00 | this.FLAGS6502.U;
+
+        // Clear internal helper variables
+        this.addr_rel = 0x0000;
+        this.addr_abs = 0x0000;
+        this.fetched = 0x00;
+
+        // Reset takes time to execute
+        this.cycles = 8;
+    }
+
+    // Interrupt requests are a complex operation and only happen if the
+    // "disable interrupt" flag is 0. IRQs can happen at any time, but
+    // you dont want them to be destructive to the operation of the running 
+    // program. Therefore the current instruction is allowed to finish
 
     irq() {		// Interrupt Request - Executes an instruction at a specific location
+        // If interrupts are allowed
+	if (this.GetFlag(this.FLAGS6502.I) == 0)
+        {
+            // Push the program counter to the stack. It's 16-bits dont
+            // forget so that takes two pushes
+            this.write(0x0100 + this.stkp, (this.pc >> 8) & 0x00FF);
+            this.stkp--;
+            this.write(0x0100 + this.stkp, this.pc & 0x00FF);
+            this.stkp--;
 
+            // Then Push the status register to the stack
+            this.SetFlag(this.FLAGS6502.B, 0);
+            this. SetFlag(this.FLAGS6502.U, 1);
+            this.SetFlag(this.FLAGS6502.I, 1);
+            this.write(0x0100 + this.stkp, this.status);
+            this.stkp--;
+
+            // Read new program counter location from fixed address
+            this.addr_abs = 0xFFFE;
+            const low = this.read(this.addr_abs + 0);
+            const high = this.read(this.addr_abs + 1);
+            this.pc = (high << 8) | low;
+
+            // IRQs take time
+            this.cycles = 7;
+        }
     }
 
+    // A Non-Maskable Interrupt cannot be ignored. It behaves in exactly the
+    // same way as a regular IRQ, but reads the new program counter address
+    // form location 0xFFFA.
     nmi() {		// Non-Maskable Interrupt Request - As above, but cannot be disabled
+        this.write(0x0100 + this.stkp, (this.pc >> 8) & 0x00FF);
+        this.stkp--;
+        this.write(0x0100 + this.stkp, this.pc & 0x00FF);
+        this.stkp--;
 
+        this.SetFlag(this.FLAGS6502.B, 0);
+        this.SetFlag(this.FLAGS6502.U, 1);
+        this.SetFlag(this.FLAGS6502.I, 1);
+        this.write(0x0100 + this.stkp, this.status);
+        this.stkp--;
+
+        this.addr_abs = 0xFFFA;
+        const low = this.read(this.addr_abs + 0);
+        const high =this. read(this.addr_abs + 1);
+        this.pc = (high << 8) | low;
+
+        this.cycles = 8;
     }
 
     clock() {	// Perform one clock cycle's worth of update
-        if (this.cycles == 0)
+        if (this.cycles === 0)
         {
             // Read next instruction byte. This 8-bit value is used to index
             // the translation table to get the relevant information about
@@ -103,7 +199,19 @@ class Processor6502 {
         this.cycles--;
     }
 
-    fetch (){
+    // Fetch an instruction from memory. The read location of data can come from two sources, a memory address, or
+	// its immediately available as part of the instruction. This function decides
+	// depending on address mode of instruction byte
+	fetch (){
+		// Some instructions dont have to 
+		// fetch data as the source is implied by the instruction. For example
+		// "INX" increments the X register. There is no additional data
+		// required.
+		if (!(this.instruction_lookup[this.opcode][ADDRESSING_MODE] === "IMP"))
+		{
+			this.fetched = this.read(this.addr_abs);
+		}
+		return this.fetched;
     }
 }
 

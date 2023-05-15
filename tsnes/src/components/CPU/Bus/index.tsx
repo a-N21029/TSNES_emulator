@@ -17,7 +17,7 @@ const Bus = () => {
     // devices on the bus
     const ram = new Uint8Array(64*1024); // 64kb RAM connected to bus
     const x = new Processor6502();
-    return <>{console.log(x.instruction_lookup)}</>
+    return <>{console.log(x.FLAGS6502)}</>
 }
 
 export default Bus
