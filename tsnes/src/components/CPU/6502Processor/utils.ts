@@ -28,7 +28,7 @@ interface FLAGS6502 {
     V: number;
     N: number;
 }
-class Processor6502 {
+class Processor6502 { // NES CPU used a 6502 processor
 
     // 6502 processor registers. All are 8-bit registers except for the program counter, which is 16
     a:number;    	    // Accumulator Register
@@ -44,7 +44,7 @@ class Processor6502 {
 	cycles:number;	    // Counts how many cycles the current instruction has remaining
     fetched:number;     // some instructions may require to fetch data, that data will be stored here in intermediate steps
     instruction_lookup:any; // look up table for each instruction and addressing mode
-    bus:Bus;
+    bus:Bus | any; // only null upon initialization
 
     constructor(){
         this.a=0x00;
@@ -70,16 +70,16 @@ class Processor6502 {
         this. cycles  = 0;
         this.fetched = 0x00;
         this.instruction_lookup = instruction_lookup;
-        this.bus = new Bus(this);
+        this.bus = null;
     }
 
     read(addr:number) {
-        return this.bus.read(addr);
+        return this.bus.cpuread(addr);
     }
 
     write(addr:number, data:number)
     {
-        this.bus.write(addr, data)
+        this.bus.cpuwrite(addr, data)
     }
 
     // Sets or clears a specific bit of the status register
@@ -215,29 +215,51 @@ class Processor6502 {
     }
 }
 
+// NES PPU was made of a 2C02 chip
+class PPU2C02
+{
+
+    cpuread(addr:number){
+
+    }
+
+    cpuwrite(addr:number, data:number){
+
+    }
+}
 
 class Bus {
 
     // The devices connected to the bus
     cpu:Processor6502; // the central processing unit responsible for executing instructions
-    ram:Uint8Array; // RAM is 64k
+    ram:Uint8Array; // internal RAM is 8kb but overall only 2kb are usable because of the way memory was addressed in NES
+    ppu:PPU2C02; // picture processing unit
 
-    constructor(cpu:Processor6502){
+    constructor(cpu:Processor6502, ppu:PPU2C02){
         this.cpu = cpu;
-        this.ram = new Uint8Array(64*1024);
+        this.ram = new Uint8Array(2048);
+        this.ppu = ppu;
+        
+        this.cpu.bus = this;
     }
 
     // read and write operations to the bus
-    read(addr:number) {
-        if (0x0000 <= addr && addr <= 0xFFFF){
-            return this.ram[addr]; // only read the contents if they are within address range
+    cpuread(addr:number) {
+        if (0x0000 <= addr && addr <= 0x1FFF){  // only read the contents if they are within addressable range (first 8kb of bus)
+            return this.ram[addr & 0x07FF];     // memory is mirrored every 2kb, bitwise AND with 2kb to wrap around the useable RAM space 
+        }
+        else if (0x2000 <= addr && addr <= 0x3FFF){  // addressable range of PPU
+            return this.ppu.cpuread(addr & 0x07FF);
         }
         return 0x00;
     }
 
-    write(addr:number, data:number){
-        if (0x0000 <= addr && addr <= 0xFFFF){
-            this.ram[addr] = data
+    cpuwrite(addr:number, data:number){
+        if (0x0000 <= addr && addr <= 0x1FFF){
+            this.ram[addr & 0x07FF] = data
+        }
+        else if (0x2000 <= addr && addr <= 0x3FFF){
+            this.ppu.cpuwrite(addr & 0x0007, data);
         }
     }
 }
