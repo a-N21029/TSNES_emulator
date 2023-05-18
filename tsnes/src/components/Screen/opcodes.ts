@@ -1,5 +1,5 @@
 import { IMM, IMP, ZP0, ZPX, ZPY, REL, ABS, ABX, ABY, IND, IZX, IZY } from "./a_modes"
-import Processor6502 from "./utils"
+import {Processor6502} from "./utils"
 
 const BITS16 = 2**16 - 1
 // Opcodes
@@ -701,6 +701,7 @@ export const ADDRESSING_MODE = 1;
 export const OPERATION = 2;
 export const ADDRESSING_MODE_FUNC = 3;
 export const CYCLES_REQUIRED = 4;
+
 // structure ["<INSTRUTION_NAME>", "<ADDRESSING_MODE>", INSTRUCTION_FUNC, ADDRESSING_MODE_FUNC, CYCLES_REQUIRED]
 export const instruction_lookup =
     [

@@ -1,6 +1,6 @@
 // Addressing modes. Will return 1 if an additional clock cycle is required, and 0 no additional ones are needed to execute an instruction
 
-import Processor6502 from "./utils";
+import {Processor6502} from "./utils";
 // import Bus from "./utils";
 
 const BITS16 = 2**16 - 1
