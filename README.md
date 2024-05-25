@@ -11,7 +11,7 @@ This project would not have been possible without the help of the NES dev commun
 2. Mapper support
 
 ### TODO: Nice to have features
-1. Using web workers(or any viable alternatives) to multithread application, further optimizing the emulator
+1. Using web workers(or any viable alternatives) to multithread application for each hardware component, further optimizing the emulator (the NES was a distributed system after all)
 
 Until then, here are some screenshots of the extracted sprite data from the Pacman CHR ROM (with a funky color palette):
 
