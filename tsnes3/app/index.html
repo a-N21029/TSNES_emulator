@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TSNES: A Typescript NES Emulator</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <canvas id=canvas width=256 height=240 style="background:#000"></canvas>
+    <!-- <b>Controls</b>: arrow keys + X + C + Start + Esc -->
+    <!-- <input type=file id=file> -->
+</body>
+
+<script>var exports = {};</script>
+<script src="PacMan.js"></script>
+<script src="types.js"></script>
+<script src="util.js"></script>
+<script src="ppu/ppu.js"></script>
+<script src="rom/rom.js"></script>
+<script src="bus/bus.js"></script>
+<script src="cpu/opcodes.js"></script>
+<script src="cpu/cpu.js"></script>
+<script src="frame.js"></script>
+<script src="render.js"></script>
+<script>
+    // var c = document.getElementById("canvas");
+    // var ctx = c.getContext("2d");
+
+    // const rom = new exports.ROM(exports.pacman);
+    // const ppu = new exports.PPU(rom.chr_rom, rom.screen_mirroring);
+    // let frame = new exports.Frame();
+    // const callback = (ppu) => {
+    //     // exports.render(ppu, frame);
+
+    //     // for (let i = 0; i < frame.data.length; i += 3) {
+    //     //     ctx.fillStyle = `rgb(${ frame.data[i]}, ${frame.data[i + 1]}, ${frame.data[i + 2]})`;  // Set the fill color
+
+    //     //     let pixel_idx = Math.floor(i / 3);
+    //     //     let x = pixel_idx % frame.WIDTH;
+    //     //     let y = Math.floor(pixel_idx / frame.WIDTH);
+    //     //     ctx.fillRect(x, y, 1, 1);  // Draw the rectangle (x, y, width, height)
+    //     // }
+    // }
+    // const bus = new Bus(exports.pacman, callback);
+    // let cpu = new CPU(bus);
+    // console.log(cpu)
+    // cpu.reset();
+    // cpu.run(exports.pacman);
+
+
+
+    const rom = new exports.ROM(exports.pacman);
+    
+    let tile_frame = show_tile_bank(rom.chr_rom, 0);
+    console.log(tile_frame);
+    
+    var c = document.getElementById("canvas");
+    var ctx = c.getContext("2d");
+
+    for (let i = 0; i < tile_frame.data.length; i += 3) {
+        ctx.fillStyle = `rgb(${tile_frame.data[i]}, ${tile_frame.data[i + 1]}, ${tile_frame.data[i + 2]})`;  // Set the fill color
+
+        let pixel_idx = Math.floor(i / 3);
+        let x = pixel_idx % tile_frame.WIDTH;
+        let y = Math.floor(pixel_idx / tile_frame.WIDTH);
+        ctx.fillRect(x, y, 1, 1);  // Draw the rectangle (x, y, width, height)
+    }
+    
+
+</script>
+</html>

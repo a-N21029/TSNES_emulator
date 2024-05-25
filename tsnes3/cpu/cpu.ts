@@ -2,9 +2,34 @@ import { AddressingMode, opcodes } from './opcodes';
 import {uint8, uint16, program, uint8_OR, uint3, uint8_AND, uint16_ADD, uint8_ADD, uint16_AND, touint16, touint8, int8, toint8, uint8_XOR} from '../types'
 import { memcpy } from '../util';
 import { Bus } from '../bus/bus';
+import { game } from '../nes_small_testfile';
+import { nestest } from '../nestest/nestest';
+import { pacman } from '../PacMan';
 
 
 const STACK_SIZE: uint16 = 0x100 as uint16; // 6502 stack is located between addressess $0100-$01FF
+
+enum InterruptType {
+    NMI,
+}
+
+interface Interrupt {
+    itype: InterruptType;
+    vector_addr: uint16;
+    b_flag_mask: uint8;
+    cpu_cycles: uint8;
+}
+
+class Interrupt implements Interrupt {
+    public constructor(itype: InterruptType, v_addr: uint16, b_flag_mask: uint8, cycles: uint8) {
+        this.itype = itype;
+        this.vector_addr = v_addr;
+        this.b_flag_mask = b_flag_mask;
+        this.cpu_cycles = cycles;
+    }
+}
+
+const NMI_INTERRUPT = new Interrupt(InterruptType.NMI, 0xFFFA as uint16, 0b00100000 as uint8, 2 as uint8);
 
 export class CPU{
     // status register flags:
@@ -22,19 +47,19 @@ export class CPU{
     public status:      uint8;   // status register
     private pc:         uint16;  // program counter
     private sp:         uint8;   // stack pointer.
-    public RAM: uint8[];
-    // public bus:         Bus;  
+    // public RAM: uint8[];
+    public bus:         Bus;  
     
 
-    public constructor() {
+    public constructor(bus: Bus) {
         this.register_a = 0    as uint8;
         this.register_x = 0    as uint8;
         this.register_y = 0    as uint8;
         this.status     = 0    as uint8;
         this.pc         = 0    as uint16;
         this.sp         = 0xFF as uint8;
-        this.RAM        = Array<uint8>(0xFFFF);
-        // this.bus = new Bus();
+        // this.RAM        = Array<uint8>(0xFFFF);
+        this.bus = bus;
     }
 
     public get_accumulator(): uint8{
@@ -134,6 +159,22 @@ export class CPU{
         this.status = uint8_AND(this.status, ~0b0000_1000);
     }
 
+    private set_break1(): void {
+        this.status = uint8_OR(this.status, 0b0001_0000);
+    }
+
+    private unset_break1(): void {
+        this.status = uint8_AND(this.status, ~0b0001_0000);
+    }
+
+    private set_break2(): void {
+        this.status = uint8_OR(this.status, 0b0010_0000);
+    }
+
+    private unset_break2(): void {
+        this.status = uint8_AND(this.status, ~0b0010_0000);
+    }
+
     private set_overflow(): void {
         this.status = uint8_OR(this.status, 0b0100_0000);
     }
@@ -158,12 +199,15 @@ export class CPU{
     // 1. Fetch next execution instruction from the instruction memory
     // 2. Decode the instruction
     // 3. Execute the Instruction
-    // 4. Repeat the cycle
+    // 4. (unless there is an interrupt) Repeat the cycle
     public run(prog: program): void {
         this.load(prog);
         this.reset();
         while (this.pc < 0x8000 + prog.length) {
-            console.log(this.pc.toString(16))
+            if(this.bus.poll_nmi_status()) {
+                this.interrupt_nmi();
+            }
+            // console.log(this.pc.toString(16))
             const opcode = this.fetch(this.pc);
             if(this.decode_and_execute(opcode)) {
                 return;
@@ -180,8 +224,9 @@ export class CPU{
     // 6502 Reference: https://www.nesdev.org/obelisk-6502-guide/reference.html
     // return 1 if an interrupt was caused by BRK, and 0 otherwise
     private decode_and_execute(opcode: uint8): number {
-        console.log(opcode.toString(16))
+        // console.log(opcode.toString(16))
         const addr_mode: AddressingMode = opcodes[opcode].addressingMode;
+        const cycles: number = opcodes[opcode].cycles;
         const old_pc:uint16 = this.pc;
         switch (opcode) {
             case 0x69:
@@ -455,8 +500,167 @@ export class CPU{
             case 0x98:
                 this.TYA();
                 break;
+            
+            // UNOFFICIAL OPCODES
+
+            case 0xc7: // DCP
+            case 0xd7:
+            case 0xCF:
+            case 0xdF:
+            case 0xdb:
+            case 0xd3:
+            case 0xc3:
+                this.DCP(addr_mode);
+                break;
+            case 0x27:
+            case 0x37:
+            case 0x2F:
+            case 0x3F:
+            case 0x3b:
+            case 0x33:
+            case 0x23:
+                this.RLA(addr_mode);
+                break;
+            case 0x07:
+            case 0x17:
+            case 0x0F:
+            case 0x1f:
+            case 0x1b:
+            case 0x03:
+            case 0x13:
+                this.SLO(addr_mode);
+                break;
+            case 0x47:
+            case 0x57:
+            case 0x4F:
+            case 0x5f:
+            case 0x5b:
+            case 0x43:
+            case 0x53:
+                this.SRE(addr_mode);
+                break;
+            case 0x80:
+            case 0x82:
+            case 0x89:
+            case 0xc2:
+            case 0xe2:
+                break; // 2-byte NOPs
+            case 0xCB:
+                this.AXS(addr_mode);
+                break;
+            case 0x6B:
+                this.ARR(addr_mode);
+                break;
+            case 0xEB:
+                this.SBC_unofficial(addr_mode);
+                break;
+            case 0x0B:
+            case 0x2B:
+                this.ANC(addr_mode);
+                break;
+            case 0x4B:
+                this.ALR(addr_mode);
+                break;
+            case 0x04:
+            case 0x44:
+            case 0x64:
+            case 0x14:
+            case 0x34:
+            case 0x54:
+            case 0x74:
+            case 0xd4:
+            case 0xf4:
+            case 0x0c:
+            case 0x1c:
+            case 0x3c:
+            case 0x5c:
+            case 0x7c:
+            case 0xdc:
+            case 0xfc: // READ NOPs
+                {
+                    const [addr, page_crossed] = this.get_operand_address(addr_mode);
+                    this.mem_read(addr);
+                    if (page_crossed){this.bus.tick(1 as uint8);}
+                }
+                break;
+            case 0x67:
+            case 0x77:
+            case 0x6f:
+            case 0x7f:
+            case 0x7b:
+            case 0x63:
+            case 0x73:
+                this.RRA(addr_mode);
+                break;
+            case 0xe7:
+            case 0xf7:
+            case 0xef:
+            case 0xff:
+            case 0xfb:
+            case 0xe3:
+            case 0xf3:
+                this.ISB(addr_mode);
+                break;
+            case 0x02:
+            case 0x12:
+            case 0x22:
+            case 0x32:
+            case 0x42:
+            case 0x52:
+            case 0x62:
+            case 0x72:
+            case 0x92:
+            case 0xb2:
+            case 0xd2:
+            case 0xf2:
+            case 0x1a:
+            case 0x3a:
+            case 0x5a:
+            case 0x7a:
+            case 0xda:
+            case 0xfa: // more NOPs
+                break;
+            case 0xa7:
+            case 0xb7:
+            case 0xaf:
+            case 0xbf:
+            case 0xa3:
+            case 0xb3:
+                this.LAX(addr_mode);
+                break;
+            case 0x87:
+            case 0x97:
+            case 0x8f:
+            case 0x83:
+                this.SAX(addr_mode);
+                break;
+            case 0xAB:
+                this.LXA(addr_mode);
+                break;
+            case 0x8B:
+                this.XAA(addr_mode);
+                break;
+            case 0xBB:
+                this.LAS(addr_mode);
+                break;
+            case 0x9B:
+                this.TAS();
+                break;
+            case 0x93:
+                this.AHX_Indirect_Y();
+                break;
+            case 0x9F:
+                this.AHX_Absolute_Y();
+                break;
+            case 0x9E:
+                this.SHX();
+                break;
+            case 0x9C:
+                this.SHY();
+                break;
         }
         // if there were no jump/branch instructions that altered the pc
+        this.bus.tick(cycles as uint8);
         if (old_pc == this.pc) {
             // make sure to increment pc accordingly
             this.pc = uint16_ADD(this.pc, opcodes[opcode].size - 1);
@@ -482,7 +686,12 @@ export class CPU{
     // helper for the branch instructions
     private branch(condition: boolean, offset: int8) {
         if(condition) {
-            this.pc = uint16_ADD(this.pc, offset);
+            this.bus.tick(1 as uint8);
+
+            const jump_addr: uint16 = uint16_ADD(uint16_ADD(this.pc, 1), offset);
+            this.pc = jump_addr;
+
+            if(this.page_crossed(uint16_ADD(this.pc, 1), jump_addr)){this.bus.tick(1 as uint8);}
         }
     }
 
@@ -509,16 +718,21 @@ export class CPU{
         return touint16((high8 << 8) | low8);
     }
 
+    // helper when counting the number of cycles for instructions with variable cycles depending on execution flow
+    public page_crossed(addr1: uint16, addr2: uint16) {
+        return (addr1 & 0xFF00) != (addr2 & 0xFF00);
+    }
+
     // MEMORY OPERATIONS
     private mem_read(addr: uint16): uint8 {
-        const res: uint8 = this.RAM[addr];
-        return res;
-        // return this.bus.mem_read(addr);
+        // const res: uint8 = this.RAM[addr];
+        // return res;
+        return this.bus.mem_read(addr);
     }
 
     private mem_write(addr: uint16, data: uint8) {
-        this.RAM[addr] = data;
-        // this.bus.mem_write(addr, data);
+        // this.RAM[addr] = data;
+        this.bus.mem_write(addr, data);
     }
 
     // NES CPU uses little-endian addressing
@@ -536,55 +750,57 @@ export class CPU{
     }
 
     // HANDLE ADDRESSING MODES
-    private get_operand_address(mode:AddressingMode): uint16 {
+    private get_operand_address(mode:AddressingMode): [uint16, boolean] {
         switch(mode) {
             case AddressingMode.Immediate:
-                return this.pc;
+                return [this.pc, false];
             case AddressingMode.ZeroPage:
-                return touint16(this.mem_read(this.pc));
+                return [touint16(this.mem_read(this.pc)), false];
             case AddressingMode.Absolute:
-                return this.mem_read_u16(this.pc);
+                return [this.mem_read_u16(this.pc), false];
             case AddressingMode.ZeroPage_X:
                 const locX:uint8 = this.mem_read(this.pc);
                 const addrX:uint16 = touint16(uint8_ADD(locX, this.register_x));
-                return addrX;
+                return [addrX, false];
             case AddressingMode.ZeroPage_Y:
                 const locY:uint8 = this.mem_read(this.pc);
                 const addrY:uint16 = touint16(uint8_ADD(locY, this.register_y));
-                return addrY;
+                return [addrY, false];
             case AddressingMode.Absolute_X:
                 const baseX:uint16 = this.mem_read_u16(this.pc);
                 const addr_absX:uint16 = touint16(uint16_ADD(baseX, this.register_x));
-                return addr_absX;
+                return [addr_absX, this.page_crossed(baseX, addr_absX)];
             case AddressingMode.Absolute_Y:
                 const baseY:uint16 = this.mem_read_u16(this.pc);
                 const addr_absY:uint16 = touint16(uint16_ADD(baseY, this.register_y));
-                return addr_absY;
+                return [addr_absY, this.page_crossed(baseY, addr_absY)];
             case AddressingMode.Indirect_X:
                 const baseXindirect:uint8 = this.mem_read(this.pc);
                 const ptrX: uint8 = uint8_ADD(baseXindirect, this.register_x);
                 const lowX: uint8 = this.mem_read(touint16(ptrX));
                 const highX: uint8 = this.mem_read(touint16(uint8_ADD(ptrX, 1)));
-                return ((highX << 8) | lowX) as uint16;
+                return [((highX << 8) | lowX) as uint16, false];
             case AddressingMode.Indirect_Y:
                 const baseYindirect:uint8 = this.mem_read(this.pc);
-                const ptrY: uint8 = uint8_ADD(baseYindirect, this.register_y);
-                const lowY: uint8 = this.mem_read(touint16(ptrY));
-                const highY: uint8 = this.mem_read(touint16(uint8_ADD(ptrY, 1)));
-                return ((highY << 8) | lowY) as uint16;
+
+                const lowY: uint8 = this.mem_read(touint16(baseYindirect));
+                const highY: uint8 = this.mem_read(touint16(uint8_ADD(baseYindirect, 1)));
+                const d_base: uint16 = ((highY << 8) | lowY) as uint16;
+                const dereference: uint16 = uint16_ADD(d_base, this.register_y);
+                return [dereference, this.page_crossed(d_base, dereference)];
             case AddressingMode.NoMode:
                 console.error(`${mode} mode is not supported!`);
-                return -1 as uint16;
+                return [-1 as uint16, false];
         }
         // won't reach here because all cases are handled in switch. But need to make compiler happy :)
-        return -1 as uint16;
+        return [-1 as uint16, false];
     }
     // load program into RAM
     // load method should load a program into PRG ROM space and save the reference to the code into 0xFFFC memory cell
     private load(prog: program){
-        memcpy(this.RAM, 0x8000, prog, 0, prog.length);
+        // memcpy(this.RAM, 0x8000, prog, 0, prog.length);
         this.pc = 0x8000 as uint16;
-        this.mem_write_u16(0xFFFC as uint16, 0x8000 as uint16);
+        // this.mem_write_u16(0xFFFC as uint16, 0x8000 as uint16);
     }
 
     // reset registers when a new game is loaded
@@ -594,24 +810,26 @@ export class CPU{
         this.register_x = 0    as uint8;
         this.status     = 0    as uint8;
         this.sp         = 0xFF as uint8;
-        this.pc         = this.mem_read_u16(0xFFFC as uint16);
+        // this.pc         = this.mem_read_u16(0xFFFC as uint16);
     }
 
     // =====INSTRUCTIONS=====
     private ADC(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
         this.add_to_accumulator(value);
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private AND(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
         this.set_accumulator(uint8_AND(this.register_a, value));
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private ASL(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
         if(value & 0b1000_0000) {
             this.set_carry();
@@ -652,7 +870,7 @@ export class CPU{
     }
 
     private BIT(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
         const mask: uint8 = uint8_AND(this.register_a, value);
         mask == 0 ? this.set_carry() : this.unset_carry();
@@ -702,17 +920,19 @@ export class CPU{
     }
 
     private CMP(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         (this.register_a >= value) ? this.set_carry() : this.unset_carry();
 
         const res:uint8 = uint8_ADD(this.register_a, -value);
         this.update_zero_and_negative_flags(res);
+
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private CPX(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         (this.register_x >= value) ? this.set_carry() : this.unset_carry();
@@ -722,7 +942,7 @@ export class CPU{
     }
 
     private CPY(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         (this.register_y >= value) ? this.set_carry() : this.unset_carry();
@@ -732,7 +952,7 @@ export class CPU{
     }
 
     private DEC(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         const res:uint8 = uint8_ADD(value, -1);
@@ -752,13 +972,14 @@ export class CPU{
     }
 
     private EOR(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
         this.set_accumulator(uint8_XOR(this.register_a, value));
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private INC(addr_mode: AddressingMode): void {
-        const addr: uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value:uint8 = this.mem_read(addr);
         const res: uint8 = uint8_ADD(value, 1);
         this.mem_write(addr, res);
@@ -774,7 +995,7 @@ export class CPU{
     }
 
     private JMP_abs() {
-        const addr:uint16 = this.mem_read_u16(this.pc);
+        const addr: uint16 = this.mem_read_u16(this.pc);
         this.pc = addr;
     }
 
@@ -784,7 +1005,7 @@ export class CPU{
     // This is fixed in some later chips like the 65SC02 but it is typically not used if the indirect vector is not at the end of the page.
     // This bug is recreated here
     private JMP_ind() {
-        const addr:uint16 = this.mem_read_u16(this.pc);
+        const addr: uint16 = this.mem_read_u16(this.pc);
         let ind_ref: uint16;
 
         // if on page boundary
@@ -805,25 +1026,28 @@ export class CPU{
     }
 
     private LDA(addr_mode: AddressingMode): void {
-        const addr: uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value:uint8 = this.mem_read(addr);
         this.set_accumulator(value);
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private LDX(addr_mode: AddressingMode): void {
-        const addr: uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value:uint8 = this.mem_read(addr);
         this.set_X(value);
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private LDY(addr_mode: AddressingMode): void {
-        const addr: uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value:uint8 = this.mem_read(addr);
         this.set_Y(value);
+        if (page_crossed){this.bus.tick(1 as uint8);} 
     }
 
     private LSR(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
         if(value & 0b0000_0001) {
             this.set_carry();
@@ -846,10 +1070,11 @@ export class CPU{
     }
 
     private ORA(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         this.set_accumulator(uint8_OR(this.register_a, value));
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private PHA() {
@@ -872,7 +1097,7 @@ export class CPU{
     }
 
     private ROL(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         const old_carry: uint8 = (uint8_OR(this.status, 0b0000_0001));
@@ -895,7 +1120,7 @@ export class CPU{
     }
 
     private ROR(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         const value: uint8 = this.mem_read(addr);
 
         const old_carry: uint8 = touint8(uint8_OR(this.status, 0b0000_0001) << 7);
@@ -930,10 +1155,11 @@ export class CPU{
     }
 
     private SBC(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         let value: uint8 = this.mem_read(addr);
         value = touint8(~value - 1); // get negative of number
         this.add_to_accumulator(value); // essentially performing regiser_a + (-value)
+        if (page_crossed){this.bus.tick(1 as uint8);}
     }
 
     private SEC(): void {
@@ -949,17 +1175,17 @@ export class CPU{
     }
 
     private STA(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         this.mem_write(addr, this.register_a);
     }
     
     private STX(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         this.mem_write(addr, this.register_x);
     }
     
     private STY(addr_mode: AddressingMode): void {
-        const addr:uint16 = this.get_operand_address(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
         this.mem_write(addr, this.register_y);
     }
 
@@ -987,20 +1213,237 @@ export class CPU{
         this.set_accumulator(this.register_y);
     }
 
+    // UNOFFICIAL OPCODES
+
+    private DCP(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        let data: uint8 = this.mem_read(addr);
+        data = uint8_ADD(data, 1);
+        this.mem_write(addr, data);
+        if (data <= this.register_a) {
+            this.set_carry();
+        }
+
+        this.update_zero_and_negative_flags(uint8_ADD(this.register_a, -data));
+    }
+
+    private RLA(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        let data: uint8 = this.mem_read(addr);
+        data = uint8_ADD(data, 1);
+        this.mem_write(addr, data);
+        if (data <= this.register_a) {
+            this.set_carry();
+        }
+
+        this.update_zero_and_negative_flags(uint8_ADD(this.register_a, -data));
+    }
+    
+    private SLO(addr_mode: AddressingMode) {
+        this.ASL(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data:uint8 = this.mem_read(addr)
+        this.set_accumulator(uint8_OR(this.register_a, data));
+    }
+
+    private SRE(addr_mode: AddressingMode) {
+        this.LSR(addr_mode);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr)
+        this.set_accumulator(uint8_XOR(this.register_a, data));
+    }
+
+    private AXS(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        let res: uint8 = touint8(this.register_a & this.register_x);
+        res = uint8_ADD(res, -1);
+
+        if (data <= res) {
+            this.set_carry();
+        }
+        this.set_X(res);
+    }
+
+    private ARR(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_AND(this.register_a, data));
+        this.ROR_accum();
+        const res = this.register_a;
+        const bit_5 = (res >> 5) & 1;
+        const bit_6 = (res >> 6) & 1;
+
+        if (bit_6 == 1) {
+            this.set_carry();
+        } else {
+            this.unset_carry();
+        }
+
+        if ((bit_5 ^ bit_6) == 1) {
+            this.set_overflow();
+        } else {
+            this.unset_overflow()
+        }
+
+        this.update_zero_and_negative_flags(res);
+    }
+
+    private SBC_unofficial(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_ADD(this.register_a, -1));
+    }
+
+    private ANC(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_AND(this.register_a, data));
+
+        if(this.status_negative()) {
+            this.set_carry();
+        }
+        else {
+            this.unset_carry();
+        }
+    }
+
+    private ALR(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_AND(this.register_a, data));
+
+        this.LSR_accum();
+    }
+
+    private RRA(addr_mode: AddressingMode) {
+        this.ROR(addr_mode);
+
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_ADD(this.register_a, data));
+    }
+
+    private ISB(addr_mode: AddressingMode) {
+        this.INC(addr_mode);
+
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_ADD(this.register_a, -data));
+    }
+
+    private LAX(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(data);
+        this.register_x = this.register_a;
+    }
+
+    private SAX(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = uint8_AND(this.register_a, this.register_x);
+        this.mem_write(addr, data);
+    }
+
+    private LXA(addr_mode: AddressingMode) {
+        this.LDA(addr_mode);
+        this.TAX();
+    }
+
+    private XAA(addr_mode: AddressingMode) {
+        this.set_accumulator(this.register_x);
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        const data: uint8 = this.mem_read(addr);
+        this.set_accumulator(uint8_AND(this.register_a, data));
+    }
+    
+    private LAS(addr_mode: AddressingMode) {
+        const [addr, page_crossed]: [uint16, boolean] = this.get_operand_address(addr_mode);
+        let data: uint8 = this.mem_read(addr);
+        data = uint8_AND(data, this.sp);
+        this.register_a = data;
+        this.register_x = data;
+        this.sp = data;
+        this.update_zero_and_negative_flags(data);
+    }
+    
+    private TAS() {
+        let data: uint8 = uint8_AND(this.register_a, this.register_x);
+        this.sp = data;
+        const mem_address: uint16 = touint16(this.mem_read_u16(this.pc) + this.register_y);
+        
+        data = uint8_AND(uint8_ADD(touint8(mem_address >> 8), 1), this.sp);
+        this.mem_write(mem_address, data);
+    }
+
+    private AHX_Indirect_Y() {
+        const pos: uint8 = this.mem_read(this.pc);
+        const mem_address: uint16 = uint16_ADD(this.mem_read_u16(touint16(pos)), this.register_y);
+        const data: uint8 = uint8_AND(this.register_a, uint8_AND(this.register_x, (mem_address >> 8)));
+        this.mem_write(mem_address, data);
+    }
+
+    private AHX_Absolute_Y() {
+        let mem_address: uint16 = uint16_ADD(this.mem_read_u16(this.pc), this.register_y);
+
+        let data: uint8 = touint8(this.register_a & this.register_x & (mem_address >> 8));
+        this.mem_write(mem_address, data);
+    }
+
+    private SHX() {
+        let mem_address: uint16 = uint16_ADD(this.mem_read_u16(this.pc), this.register_y);
+
+        let data: uint8 = touint8(this.register_x & ((mem_address >> 8) + 1));
+        this.mem_write(mem_address, data);
+    }
+
+    private SHY() {
+        let mem_address: uint16 = uint16_ADD(this.mem_read_u16(this.pc), this.register_y);
+
+        let data: uint8 = touint8(this.register_y & ((mem_address >> 8) + 1));
+        this.mem_write(mem_address, data);
+    }
+
+    // NMI interrupt
+    public interrupt_nmi() {
+        this.stack_push_16(this.pc);
+        let flag = this.status;
+        flag = uint8_AND(this.status, ~0b0001_0000);
+        flag = uint8_OR(this.status, 0b0010_0000);
+
+        this.stack_push(flag);
+        this.set_interrupt();
+
+        this.bus.tick(2 as uint8);
+        this.pc = this.mem_read_u16(0xfffA as uint16);
+    }
 }
 
-const a = new CPU();
-var prog:program = [0xA9 as uint8, 0xFF as uint8, 0x2C as uint8, 0x01 as uint8, 80 as uint8, 0x00 as uint8]
-a.stack_push(1 as uint8)
-a.stack_push(2 as uint8)
-a.stack_push_16(356 as uint16);
-a.stack_pop_16();
-a.stack_push_16(999 as uint16);
-a.run(prog);
-console.log(a.RAM);
-console.log(a.get_accumulator());
-console.log(a.status_carry());
-console.log(a.status.toString(2));
-console.log(a.status_zero());
-console.log(a.status_overflow());
-console.log(a.status_negative());
+// var prog:program = [0xA9 as uint8, 0xFF as uint8, 0x2C as uint8, 0x01 as uint8, 80 as uint8, 0x00 as uint8]
+// let game:program = [
+//     78, 69, 83, 26, 2, 0, 1, 0, 0, 0, 0, 0,
+//     0,  0,  0,  0,] as program;
+// game = game.concat(Array<uint8>(512));
+// game = game.concat(Array<uint8>(2**15));
+// game = game.concat(prog)
+// console.log(game)
+// const b = new Bus(pacman);
+// const a = new CPU(b);
+// console.log(a)
+// console.log(`mapper: ${a.bus.rom.mapper}`)
+// console.log(b);
+// console.log(a.bus.rom);
+// a.stack_push(1 as uint8)
+// a.stack_push(2 as uint8)
+// a.stack_push_16(356 as uint16);
+// a.stack_pop_16();
+// a.stack_push_16(999 as uint16);
+// console.log(a.bus.rom.prg_rom)
+// a.run(a.bus.rom.prg_rom);
+// console.log(a.RAM);
+// console.log(a.get_accumulator());
+// console.log(a.status_carry());
+// console.log(a.status.toString(2));
+// console.log(a.status_zero());
+// console.log(a.status_overflow());
+// console.log(a.status_negative());
