@@ -2,6 +2,9 @@
 
 This project is one I made for fun in my spare time. Emulation of CPU, PPU, data Bus, and rendering are all complete, but the main game loop still needs to more work, mainly throttling to 60FPS in order to make the emulator playable on browsers.
 
+## Important mention:
+This project would not have been possible without the help of the NES dev community (https://www.nesdev.org/wiki/Nesdev_Wiki). There are many remarkable people in the community who have reverse-engineered the NES console and documented the behaviours of the hardware, which made this emulation possible.
+
 ### TODO: Important features to implement
 
 1. APU/sound emulation
