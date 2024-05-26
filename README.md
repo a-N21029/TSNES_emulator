@@ -7,7 +7,7 @@ This project would not have been possible without the help of the NES dev commun
 
 ### TODO: Important features to implement
 
-1.Throttle main game loop to 60FPS so browser does not crash
+1. Throttle main game loop to 60FPS so browser does not crash
 2. APU/sound emulation
 3. Mapper support
 
