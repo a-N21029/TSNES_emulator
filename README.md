@@ -7,8 +7,9 @@ This project would not have been possible without the help of the NES dev commun
 
 ### TODO: Important features to implement
 
-1. APU/sound emulation
-2. Mapper support
+1.Throttle main game loop to 60FPS so browser does not crash
+2. APU/sound emulation
+3. Mapper support
 
 ### TODO: Nice to have features
 1. Using web workers(or any viable alternatives) to multithread application for each hardware component, further optimizing the emulator (the NES was a distributed system after all)
